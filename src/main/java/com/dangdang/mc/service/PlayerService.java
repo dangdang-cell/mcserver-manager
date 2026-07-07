@@ -1,35 +1,40 @@
 package com.dangdang.mc.service;
 
+import com.dangdang.mc.model.BannedPlayers;
 import com.dangdang.mc.model.Ops;
 import com.dangdang.mc.model.Players;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.AllArgsConstructor;
 import lombok.Data;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Scanner;
+import java.util.UUID;
 
 @Data
-@AllArgsConstructor
-
 public class PlayerService {
 
-private static Path serverPath;
+    private static Path serverPath;
+
     public PlayerService(Path p) {
         serverPath = p;
     }
 
-    public static boolean opCheck(String name) {
+    public boolean opCheck(String name) {
         try {
             List<Ops> opList = opListgetter();
             for (Ops o : opList) {
-                if (o.getName().equals(name)) {
+                if (o.getName().equalsIgnoreCase(name)) {
                     return true;
                 }
             }
-
         } catch (IOException e) {
             System.out.println("[错误] 读取op列表失败: " + e.getMessage());
             e.printStackTrace();
@@ -41,8 +46,7 @@ private static Path serverPath;
         try {
             List<Players> playerList = getPlayerList();
             for (Players p : playerList) {
-                if (p.getName().equals(name)) {
-                    System.out.println("查询成功，该玩家的信息为:");
+                if (p.getName().equalsIgnoreCase(name)) {
                     return p;
                 }
             }
@@ -50,7 +54,6 @@ private static Path serverPath;
             System.out.println("[错误] 读取玩家列表失败: " + e.getMessage());
             e.printStackTrace();
         }
-        System.out.println("查询失败，未找到该玩家");
         return null;
     }
 
@@ -58,29 +61,29 @@ private static Path serverPath;
         Players p = playerCheckNoOp(name);
         if (p != null) {
             System.out.println("玩家名:" + p.getName() + "   uuid:" + p.getUuid() + "   缓存到期时间：" + p.getExpiresOn() + "    op:" + opCheck(name));
+        } else {
+            System.out.println("查询失败，未找到该玩家");
         }
     }
 
     public List<Players> getPlayerList() throws IOException {
         ObjectMapper mapper = new ObjectMapper();
         Path playerpath = serverPath.resolve("usercache.json");
-        List<Players> playerList = mapper.readValue(
+        return mapper.readValue(
                 playerpath.toFile(),
                 new TypeReference<List<Players>>() {
-                }//这写的复杂是因为它报错，AI给我说这有什么泛型擦除要用这个泛型控制工具，下面那个op列表获取方法同理
+                }
         );
-        return playerList;
     }
 
-    public static List<Ops> opListgetter() throws IOException {
+    public List<Ops> opListgetter() throws IOException {
         ObjectMapper mapper = new ObjectMapper();
         Path opspath = serverPath.resolve("ops.json");
-        List<Ops> opList = mapper.readValue(
+        return mapper.readValue(
                 opspath.toFile(),
                 new TypeReference<List<Ops>>() {
                 }
         );
-        return opList;
     }
 
     public void playerListShow() {
@@ -91,7 +94,7 @@ private static Path serverPath;
                 for (Players p : playerslist) {
                     System.out.print("玩家名：" + p.getName());
                     System.out.print("  uuid：" + p.getUuid());
-                    System.out.print("  op: " + PlayerService.opCheck(p.getName()));
+                    System.out.print("  op: " + opCheck(p.getName()));
                     System.out.println();
                 }
             } else {
@@ -102,26 +105,183 @@ private static Path serverPath;
             e.printStackTrace();
         }
     }
-    public void opAdd(){
-        //怎么添加op呢？我不知道啊。不是说不会List转json，而是我不知道uuid怎么生成的，空着不写的话启动游戏就给这条删掉了
-        System.out.println("暂时不会，等待学习");
-    }
-    public void opDelete(String name){
+
+    public void opListShow() {
         try {
             List<Ops> opList = opListgetter();
+            System.out.println("当前有 " + opList.size() + " 名管理员");
+            if (opList.size() > 0) {
+                for (Ops o : opList) {
+                    System.out.println("玩家名: " + o.getName() + "  UUID: " + o.getUuid() + "  等级: " + o.getLevel());
+                }
+            } else {
+                System.out.println("暂无管理员");
+            }
+        } catch (IOException e) {
+            System.out.println("[错误] 读取管理员列表失败: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public void opAdd(Scanner sc) {
+        try {
+            List<Ops> opList = opListgetter();
+            String name = sc.nextLine();
             for (Ops o : opList) {
-                if (o.getName().equals(name)) {
-                    opList.remove(o);
-                    ObjectMapper mapper = new ObjectMapper();
-                    Path opspath = serverPath.resolve("ops.json");
-                    mapper.writeValue(opspath.toFile(),opList);
+                if (o.getName().equalsIgnoreCase(name)) {
+                    System.out.println("该玩家已是op");
                     return;
                 }
             }
-            System.out.println("该玩家不是op，请检查是否输入有误");
-
+            ObjectMapper mapper = new ObjectMapper();
+            Players p = playerCheckNoOp(name);
+            if (p == null) {
+                String uuid = String.valueOf(UUID.randomUUID());
+                opList.add(new Ops(uuid, name, 4, false));
+                List<Players> playersList = getPlayerList();
+                playersList.add(new Players(uuid, name, null));
+                Path opspath = serverPath.resolve("ops.json");
+                Path playerspath = serverPath.resolve("usercache.json");
+                mapper.writeValue(playerspath.toFile(), playersList);
+                mapper.writeValue(opspath.toFile(), opList);
+                System.out.println("管理员添加成功（该玩家未登录过服务器，已生成临时UUID）");
+            } else {
+                String uuid = p.getUuid();
+                opList.add(new Ops(uuid, name, 4, false));
+                Path opspath = serverPath.resolve("ops.json");
+                mapper.writeValue(opspath.toFile(), opList);
+                System.out.println("管理员添加成功");
+            }
         } catch (IOException e) {
-            System.out.println("[错误] 读取op列表失败: " + e.getMessage());
+            System.out.println("[错误] 添加管理员失败: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public void opDelete(String name) {
+        try {
+            List<Ops> opList = opListgetter();
+            Iterator<Ops> iterator = opList.iterator();
+            boolean found = false;
+            while (iterator.hasNext()) {
+                Ops o = iterator.next();
+                if (o.getName().equalsIgnoreCase(name)) {
+                    iterator.remove();
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                System.out.println("该玩家不是op，请检查是否输入有误");
+                return;
+            }
+            ObjectMapper mapper = new ObjectMapper();
+            Path opspath = serverPath.resolve("ops.json");
+            mapper.writeValue(opspath.toFile(), opList);
+            System.out.println("管理员删除成功");
+        } catch (IOException e) {
+            System.out.println("[错误] 删除管理员失败: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    // ==================== 黑名单管理 ====================
+
+    public List<BannedPlayers> getBanList() throws IOException {
+        ObjectMapper mapper = new ObjectMapper();
+        Path banpath = serverPath.resolve("banned-players.json");
+        if (!Files.exists(banpath)) {
+            return new ArrayList<>();
+        }
+        return mapper.readValue(
+                banpath.toFile(),
+                new TypeReference<List<BannedPlayers>>() {
+                }
+        );
+    }
+
+    public void banAdd(String name, String reason) {
+        try {
+            List<BannedPlayers> banList = getBanList();
+            for (BannedPlayers b : banList) {
+                if (b.getName().equalsIgnoreCase(name)) {
+                    System.out.println("该玩家已在黑名单中");
+                    return;
+                }
+            }
+
+            // 如果该玩家是OP，先移除OP权限
+            if (opCheck(name)) {
+                opDelete(name);
+                System.out.println("已自动移除该玩家的管理员权限");
+            }
+
+            ObjectMapper mapper = new ObjectMapper();
+            Players p = playerCheckNoOp(name);
+            String uuid;
+            if (p == null) {
+                uuid = String.valueOf(UUID.randomUUID());
+                List<Players> playersList = getPlayerList();
+                playersList.add(new Players(uuid, name, null));
+                Path playerspath = serverPath.resolve("usercache.json");
+                mapper.writeValue(playerspath.toFile(), playersList);
+            } else {
+                uuid = p.getUuid();
+            }
+
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z");
+            String created = sdf.format(new Date());
+
+            banList.add(new BannedPlayers(uuid, name, created, "MCServerManager", "forever", reason));
+            Path banpath = serverPath.resolve("banned-players.json");
+            mapper.writeValue(banpath.toFile(), banList);
+            System.out.println("玩家 " + name + " 已被加入黑名单");
+        } catch (IOException e) {
+            System.out.println("[错误] 添加黑名单失败: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public void banDelete(String name) {
+        try {
+            List<BannedPlayers> banList = getBanList();
+            Iterator<BannedPlayers> iterator = banList.iterator();
+            boolean found = false;
+            while (iterator.hasNext()) {
+                BannedPlayers b = iterator.next();
+                if (b.getName().equalsIgnoreCase(name)) {
+                    iterator.remove();
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                System.out.println("该玩家不在黑名单中");
+                return;
+            }
+            ObjectMapper mapper = new ObjectMapper();
+            Path banpath = serverPath.resolve("banned-players.json");
+            mapper.writeValue(banpath.toFile(), banList);
+            System.out.println("玩家 " + name + " 已从黑名单移除");
+        } catch (IOException e) {
+            System.out.println("[错误] 移除黑名单失败: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public void banListShow() {
+        try {
+            List<BannedPlayers> banList = getBanList();
+            System.out.println("当前黑名单共有 " + banList.size() + " 人");
+            if (banList.size() > 0) {
+                for (BannedPlayers b : banList) {
+                    System.out.println("玩家名: " + b.getName() + "  原因: " + b.getReason() + "  时间: " + b.getCreated());
+                }
+            } else {
+                System.out.println("黑名单为空");
+            }
+        } catch (IOException e) {
+            System.out.println("[错误] 读取黑名单失败: " + e.getMessage());
             e.printStackTrace();
         }
     }
